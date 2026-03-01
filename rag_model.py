@@ -1,5 +1,0 @@
-flask
-langchain_openai
-langgraph
-requests
-python-dotenv
