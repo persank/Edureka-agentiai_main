@@ -1,36 +1,57 @@
 import boto3
 import json
+import numpy as np
 
-client = boto3.client("bedrock-runtime", region_name="us-east-1")
-model_id = "us.amazon.nova-lite-v1:0"
+client = boto3.client(service_name='bedrock-runtime', region_name="us-west-2")
 
-def ask_bedrock_stream(user_input: str):
-    response = client.invoke_model_with_response_stream(
-        modelId=model_id,
+facts = [
+    'The first computer was invented in the 1940s.',
+    'John F. Kennedy was the 35th President of the United States.',
+    'The first moon landing was in 1969.',
+    'The capital of France is Paris.',
+    'Earth is the third planet from the sun.',
+]
+
+question = 'Who is the president of USA?'
+
+
+def cosine_similarity(a, b):
+    a = np.array(a)
+    b = np.array(b)
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def getEmbedding(input: str):
+    response = client.invoke_model(
         body=json.dumps({
-            "messages": [{"role": "user", "content": [{"text": user_input}]}],
-            "inferenceConfig": {"max_new_tokens": 512}
-        })
+            "inputText": input,
+        }),
+        modelId='amazon.titan-embed-text-v1',
+        accept='application/json',
+        contentType='application/json'
     )
 
-    print("AI: ", end="", flush=True)
-    
-    for event in response["body"]:
-        chunk = event.get("chunk")
-        if chunk:
-            data = json.loads(chunk["bytes"])
-            if "contentBlockDelta" in data:
-                text = data["contentBlockDelta"]["delta"].get("text", "")
-                if text:
-                    print(text, end="", flush=True)
-    
-    print("\n")
+    response_body = json.loads(response.get('body').read())
+    return response_body.get('embedding')
 
-if __name__ == "__main__":
-    print("Nova Streaming Chatbot ready! Type 'exit' or 'quit' to stop.\n")
-    
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() in ["exit", "quit"]:
-            break
-        ask_bedrock_stream(user_input)
+
+factsWithEmbeddings = [
+    {'text': fact, 'embedding': getEmbedding(fact)}
+    for fact in facts
+]
+
+questionEmbedding = getEmbedding(question)
+
+similarities = [
+    {
+        'text': fact['text'],
+        'similarity': cosine_similarity(fact['embedding'], questionEmbedding)
+    }
+    for fact in factsWithEmbeddings
+]
+
+similarities.sort(key=lambda x: x['similarity'], reverse=True)
+
+print(f"Similarities for question: '{question}':")
+for item in similarities:
+    print(f"  '{item['text']}': {item['similarity']:.2f}")

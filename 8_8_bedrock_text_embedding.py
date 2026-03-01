@@ -1,95 +1,35 @@
-# pip install boto3
 import boto3
 import json
-import re
+import base64
 
-# --------------------------
-# AWS Bedrock Setup
-# --------------------------
-client = boto3.client("bedrock-runtime", region_name="us-east-1")
-model_id = "us.amazon.nova-2-lite-v1:0"
+client = boto3.client(service_name='bedrock-runtime', region_name="us-west-2")
 
-# --------------------------
-# Chat history (Nova format)
-# --------------------------
-chat_history = []
-
-# --------------------------
-# Guardrails
-# --------------------------
-def check_guardrails(user_input: str) -> str | None:
-    """
-    Check input against basic guardrails.
-    Return an error message if input is blocked, else None.
-    """
-    blocked_words = ["hack", "terrorist", "bomb", "kill"]
-    max_length = 300
-
-    for word in blocked_words:
-        if re.search(rf"\b{word}\b", user_input.lower()):
-            return f"Sorry, I cannot discuss topics related to '{word}'."
-
-    if len(user_input) > max_length:
-        return "Your input is too long. Please shorten your question."
-
-    return None
-
-
-# --------------------------
-# Ask Bedrock (Nova)
-# --------------------------
-def ask_bedrock(user_input: str) -> str:
-    # Guardrail check
-    violation = check_guardrails(user_input)
-    if violation:
-        return violation
-
-    # Keep last 5 turns (10 messages: user + assistant)
-    recent_history = chat_history[-10:]
-
-    # Add current user message
-    recent_history.append({
-        "role": "user",
-        "content": [{"text": user_input}]
-    })
-
-    payload = {
-        "messages": recent_history
+stability_image_config = json.dumps({
+    "taskType": "TEXT_IMAGE",
+    "textToImageParams": {
+        "text": "A cat and a mouse on a tree",      
+    },
+    "imageGenerationConfig": {
+        "numberOfImages": 1,
+        "height": 512,
+        "width": 512,
+        "cfgScale": 8.0,
     }
+})
 
-    response = client.invoke_model(
-        modelId=model_id,
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps(payload)
-    )
+response = client.invoke_model(
+    body=stability_image_config, 
+    modelId="amazon.titan-image-generator-v2:0", 
+    accept="application/json", 
+    contentType="application/json")
 
-    output = json.loads(response["body"].read())
-    ai_answer = output["output"]["message"]["content"][0]["text"]
+response_body = json.loads(response.get("body").read())
+base64_image = response_body.get("images")[0]
 
-    # Persist full history
-    chat_history.append({
-        "role": "user",
-        "content": [{"text": user_input}]
-    })
-    chat_history.append({
-        "role": "assistant",
-        "content": [{"text": ai_answer}]
-    })
+base_64_image = base64.b64decode(base64_image)
 
-    return ai_answer
+file_path = r"c:\code\agenticai\8_bedrock\bedrock_image_8_7.png"
+with open(file_path, "wb") as f:
+    f.write(base_64_image)
 
-
-# --------------------------
-# Chatbot Loop
-# --------------------------
-print("Nova Chatbot with Guardrails is ready! Type 'exit' or 'quit' to stop.\n")
-
-while True:
-    user_input = input("You: ")
-    if user_input.lower() in ["exit", "quit"]:
-        print("Chatbot ended.")
-        break
-
-    answer = ask_bedrock(user_input)
-    print("AI:", answer)
+print(f"Image saved to {file_path}")

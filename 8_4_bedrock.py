@@ -1,49 +1,58 @@
-from langchain_aws import ChatBedrock
-from langchain_aws import BedrockEmbeddings
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.vectorstores import FAISS
+# pip install boto3
 import boto3
+import json
 
-my_data = [
-    "Mumbai is the financial capital of India.",
-    "The festival of Pongal is widely celebrated in Tamil Nadu.",
-    "ISRO launched the Chandrayaan-3 mission in 2023.",
-    "Rohit Sharma is one of India's most successful cricket captains."
-]
+# Create a Bedrock client
+client = boto3.client("bedrock-runtime", region_name="us-east-1")
 
-question = "Which Indian state celebrates Pongal?"
+# Nova model ID
+model_id = "us.amazon.nova-2-lite-v1:0"
 
-AWS_REGION = "us-west-2"
+# Chat history in Nova format
+chat_history = []
 
-bedrock = boto3.client(service_name="bedrock-runtime", region_name=AWS_REGION)
+# Helper function to send prompt to Bedrock with history
+def ask_bedrock(user_input: str) -> str:
+    # Add user message to history
+    chat_history.append({
+        "role": "user",
+        "content": [
+            {"text": user_input}
+        ]
+    })
 
-model = ChatBedrock(model_id="us.amazon.nova-lite-v1:0", client=bedrock)
+    payload = {
+        "messages": chat_history
+    }
 
-bedrock_embeddings = BedrockEmbeddings(
-    model_id="amazon.titan-embed-text-v2:0", client=bedrock
-)
+    response = client.invoke_model(
+        modelId=model_id,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps(payload)
+    )
 
-vector_store = FAISS.from_texts(my_data, bedrock_embeddings)
+    output = json.loads(response["body"].read())
+    ai_answer = output["output"]["message"]["content"][0]["text"]
 
-retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    # Add assistant response to history
+    chat_history.append({
+        "role": "assistant",
+        "content": [
+            {"text": ai_answer}
+        ]
+    })
 
-results = retriever.invoke(question)
+    return ai_answer
 
-results_string = []
-for result in results:
-    results_string.append(result.page_content)
+# Chatbot loop
+print("Nova Chatbot with memory is ready! Type 'exit' or 'quit' to stop.\n")
 
-template = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "Answer the users question based on the following context: {context}",
-        ),
-        ("user", "{input}"),
-    ]
-)
+while True:
+    user_input = input("You: ")
+    if user_input.lower() in ["exit", "quit"]:
+        print("Chatbot ended.")
+        break
 
-chain = template | model
-
-response = chain.invoke({"input": question, "context": results_string})
-print(response.content)
+    answer = ask_bedrock(user_input)
+    print("Bot:", answer)

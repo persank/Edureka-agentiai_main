@@ -1,46 +1,36 @@
-# pip install boto3
 import boto3
 import json
 
-# Create a Bedrock client
 client = boto3.client("bedrock-runtime", region_name="us-east-1")
+model_id = "us.amazon.nova-lite-v1:0"
 
-# Nova model ID
-model_id = "us.amazon.nova-2-lite-v1:0"
-
-# Helper function to send prompt to Bedrock (Nova)
-def ask_bedrock(prompt: str) -> str:
-    payload = {
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"text": prompt}
-                ]
-            }
-        ]
-    }
-
-    response = client.invoke_model(
+def ask_bedrock_stream(user_input: str):
+    response = client.invoke_model_with_response_stream(
         modelId=model_id,
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps(payload)
+        body=json.dumps({
+            "messages": [{"role": "user", "content": [{"text": user_input}]}],
+            "inferenceConfig": {"max_new_tokens": 512}
+        })
     )
 
-    output = json.loads(response["body"].read())
+    print("AI: ", end="", flush=True)
+    
+    for event in response["body"]:
+        chunk = event.get("chunk")
+        if chunk:
+            data = json.loads(chunk["bytes"])
+            if "contentBlockDelta" in data:
+                text = data["contentBlockDelta"]["delta"].get("text", "")
+                if text:
+                    print(text, end="", flush=True)
+    
+    print("\n")
 
-    # Nova response parsing
-    return output["output"]["message"]["content"][0]["text"]
-
-# Simple chatbot loop
-print("Nova Chatbot is ready! Type 'exit' or 'quit' to stop.\n")
-
-while True:
-    user_input = input("You: ")
-    if user_input.lower() in ["exit", "quit"]:
-        print("Chatbot ended.")
-        break
-
-    answer = ask_bedrock(user_input)
-    print("Bot:", answer)
+if __name__ == "__main__":
+    print("Nova Streaming Chatbot ready! Type 'exit' or 'quit' to stop.\n")
+    
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ["exit", "quit"]:
+            break
+        ask_bedrock_stream(user_input)
