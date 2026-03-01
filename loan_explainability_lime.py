@@ -1,84 +1,31 @@
-import dspy
-import os
-
-# --------------------------------
-# CONFIGURE OLLAMA ENDPOINT
-# --------------------------------
-os.environ["OLLAMA_HOST"] = "http://localhost:11434"
-
-lm = dspy.LM(
-    model="ollama/gpt-oss:latest",
-    api_base="http://localhost:11434",
-)
-
-dspy.configure(lm=lm)
-
-# --------------------------------
-# DSPy SIGNATURE + MODULE
-# --------------------------------
-class StockPredict(dspy.Signature):
-    symbol = dspy.InputField()
-    direction = dspy.OutputField(desc="Predict 'up' or 'down'")
-
-class StockPredictModule(dspy.Module):
-    def __init__(self):
-        super().__init__()
-        self.predict = dspy.Predict(StockPredict)
-
-    def forward(self, symbol):
-        return self.predict(symbol=symbol)
-
-# --------------------------------
-# CUSTOM METRIC FUNCTION
-# --------------------------------
-def exact_match_metric(example, pred, trace=None):
-    return pred.direction.lower() == example.direction.lower()
-
-predictor = StockPredictModule()
-
-# --------------------------------
-# TRAINING EXAMPLES
-# --------------------------------
-train_examples = [
-    dspy.Example(symbol="AAPL", direction="down").with_inputs("symbol"),
-    dspy.Example(symbol="GOOGL", direction="up").with_inputs("symbol"),
-    dspy.Example(symbol="TSLA", direction="up").with_inputs("symbol"),
-    dspy.Example(symbol="MSFT", direction="up").with_inputs("symbol"),
-]
-
-# --------------------------------
-# OPTIMIZATION USING BOOTSTRAP FEW-SHOT
-# --------------------------------
-optimizer = dspy.BootstrapFewShot(
-    metric=exact_match_metric,
-    max_bootstrapped_demos=3,
-    max_labeled_demos=4,
-    max_rounds=1
-)
-
-# Compile the optimized predictor
-optimized_predictor = optimizer.compile(predictor, trainset=train_examples)
-
-# --------------------------------
-# OPTIMIZATION SUMMARY TABLE
-# --------------------------------
-print("\n=== Optimization Summary ===")
-print(f"{'Symbol':<10}{'Predicted':<10}{'Actual':<10}{'Match':<6}")
-print("-" * 36)
-
-for ex in train_examples:
-    pred_obj = optimized_predictor(ex.symbol)
-    match = pred_obj.direction.lower() == ex.direction.lower()
-    print(f"{ex.symbol:<10}{pred_obj.direction:<10}{ex.direction:<10}{str(match):<6}")
-
-# --------------------------------
-# TEST THE MODEL
-# --------------------------------
-test_symbol = "INFY"
-pred = optimized_predictor(test_symbol)
-print("\nPrediction for", test_symbol, ":", pred.direction)
-
-# Save the optimized predictor
-optimized_predictor.save(r"c:\code\agenticai\9_general\dspy\stock_predictor.json")
-print("\nSaved optimized predictor to 'stock_predictor.json'")
-print("   Open this file to see the exact prompts and demos!")
+{
+  "name": "Gabrielle Davis",
+  "input": {
+    "income": 127196,
+    "credit_score": 344,
+    "loan_amount": 48823,
+    "years_employed": 29,
+    "points": 50.0
+  },
+  "prediction": 0,
+  "probability": 0.0,
+  "shap_values": {
+    "income": 0.020620903920223525,
+    "credit_score": 0.11417543606768296,
+    "loan_amount": -0.008450138791198205,
+    "years_employed": 0.004843449096964234,
+    "points": 0.4336895163729942
+  },
+  "expected_value": 0.43512083333333346,
+  "counterfactual": {
+    "flipped": true,
+    "initial_label": 0,
+    "initial_prob": 0.0,
+    "final_label": 1,
+    "final_prob": 0.9,
+    "suggested_changes": {
+      "points": 10.0
+    }
+  },
+  "natural_language": "Dear Gabrielle,\n\nThank you for your loan application. Currently, your predicted probability of approval is 0%, but there are some positive factors in your profile, such as your points and credit score. To improve your chances, I recommend increasing your points by at least 10. This adjustment could significantly enhance your likelihood of approval. \n\nBest regards,  \n[Your Name]"
+}

@@ -1,5 +1,14 @@
-flask
-langchain_openai
-langgraph
-requests
-python-dotenv
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Copy everything
+COPY . .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+
+# Run Flask app
+CMD ["python", "app/main.py"]
