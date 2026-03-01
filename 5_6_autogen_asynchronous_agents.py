@@ -1,4 +1,4 @@
-# pip install autogen-agentchat autogen-core autogen-ext python-d
+# pip install autogen-agentchat autogen-core autogen-ext python-dotenv pillow
 
 import asyncio
 from PIL import Image
@@ -10,40 +10,38 @@ from autogen_agentchat.agents import AssistantAgent
 
 load_dotenv(override=True)
 
-# Load image
-pil_image = Image.open("c://code//agenticai//5_autogen//1911_Solvay_conference.jpg")
-img = AGImage(pil_image)
+# Load image into Autogen's image type
+img = AGImage(Image.open("c://code//agenticai//5_autogen//1911_Solvay_conference.jpg"))
 
-# Create agents
+# Define agents with OpenAI model clients
 desc_agent = AssistantAgent("desc_agent", OpenAIChatCompletionClient(model="gpt-4o"))
 context_agent = AssistantAgent("context_agent", OpenAIChatCompletionClient(model="gpt-4o"))
 
 async def main():
-    # Get description
-    print("\n" + "="*50 + "\nDESCRIPTION\n" + "="*50)
-    desc = await desc_agent.on_messages([MultiModalMessage(
-        content=["Describe this historical photograph in detail. What kind of event does this appear to be?", img], 
-        source="User"
-    )], cancellation_token=None)
-    print(desc.chat_message.content)
-    
-    # Get historical context without direct identification
-    print("\n" + "="*50 + "\nHISTORICAL CONTEXT\n" + "="*50)
+    # Step 1: Ask for image description
+    desc = await desc_agent.on_messages([
+        MultiModalMessage(
+            content=["Describe this historical photograph in detail. What kind of event does this appear to be?", img],
+            source="User"
+        )], cancellation_token=None
+    )
+    print("\nDESCRIPTION\n" + "=" * 50 + f"\n{desc.chat_message.content}")
+
+    # Step 2: Ask for deeper historical context
     context = await context_agent.on_messages([
         MultiModalMessage(
-            content=["Analyze the setting, time period, and context of this photograph.", img], 
+            content=["Analyze the setting, time period, and context of this photograph.", img],
             source="User"
         ),
         TextMessage(
-            content="Based on the image analysis, if this is the 1911 Solvay Conference, who were the attendees? "
-                    "List the participants by row position (front row left to right, back row left to right) "
+            content="If this is the 1911 Solvay Conference, list the attendees by row (front/back) "
                     "and describe their major contributions to physics.",
             source="User"
-        )
-    ], cancellation_token=None)
-    print(context.chat_message.content)
-    
-    # Cleanup
+        )], cancellation_token=None
+    )
+    print("\nHISTORICAL CONTEXT\n" + "=" * 50 + f"\n{context.chat_message.content}")
+
+    # Close agents cleanly
     await desc_agent.close()
     await context_agent.close()
 

@@ -1,56 +1,53 @@
-# pip install autogen-agentchat autogen-ext python-dotenv
+# pip install pandas pydantic autogen-agentchat autogen-ext python-dotenv
 
 import asyncio
-from autogen_agentchat.ui import Console
+import pandas as pd
+from typing import Optional
+from pydantic import BaseModel
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.conditions import TextMentionTermination
-from autogen_agentchat.teams import RoundRobinGroupChat
-from autogen_agentchat.messages import TextMessage
+from autogen_agentchat.messages import StructuredMessage
 from dotenv import load_dotenv
 
-# --- Environment setup ---
+# Define structured output model
+class JobInfo(BaseModel):
+    company_name: Optional[str] = None
+    role: Optional[str] = None
+    location: Optional[str] = None
+
+# Load data and pick sample rows
+df = pd.read_csv(r"c:\code\agenticai\5_autogen\clean_jobs.csv")
+descriptions = df.loc[[4, 104, 204, 304, 404], "description"].tolist()
+
+# Setup model client
 load_dotenv(override=True)
+model_client = OpenAIChatCompletionClient(model="gpt-4o")
 
-# --- Model client ---
-model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
-
-# --- Agents ---
-primary_agent = AssistantAgent(
-    name="primary",
+# Create AssistantAgent with structured output
+agent = AssistantAgent(
+    name="job_extractor",
     model_client=model_client,
-    system_message="You are a helpful AI assistant. Write clear, concise, and factual responses.",
+    system_message="Extract company name, role, and location from the job description.",
+    output_content_type=JobInfo,
+    model_client_stream=True,
 )
 
-critic_agent = AssistantAgent(
-    name="critic",
-    model_client=model_client,
-    system_message="Provide brief, constructive feedback. Respond with 'STOP' when satisfied.",
-)
-
-# --- Termination rule ---
-termination_condition = TextMentionTermination("STOP")
-
-# --- Team setup ---
-team = RoundRobinGroupChat(
-    participants=[primary_agent, critic_agent],
-    termination_condition=termination_condition,
-)
-
-# --- Async main ---
 async def main():
-    print("Starting team discussion...\n")
+    for i, desc in enumerate(descriptions, start=1):
+        print(f"\n--- Job {i} ---")
 
-    # Run the team conversation and stream messages
-    async for message in team.run_stream(task="Write a crisp note on AI agents."):
-        if isinstance(message, TextMessage):
-            print(f"\n[{message.source.upper()}]\n{message.content}\n")
+        async for message in agent.run_stream(task=desc):
+            if isinstance(message, StructuredMessage):
+                job_info = message.content
+                if isinstance(job_info, JobInfo):
+                    print(f"\rCompany: {job_info.company_name or 'N/A'} | "
+                          f"Role: {job_info.role or 'N/A'} | "
+                          f"Location: {job_info.location or 'N/A'}", end="")
 
-    print("\nTeam discussion complete.\n")
+        print()  # newline per job
 
     await model_client.close()
-    print("Model client closed.\n")
+    print("\nAll selected jobs processed.")
 
-# --- Entry point ---
 if __name__ == "__main__":
     asyncio.run(main())

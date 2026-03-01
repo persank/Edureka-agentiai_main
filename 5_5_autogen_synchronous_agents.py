@@ -1,49 +1,60 @@
-# pip install autogen-agentchat autogen-core autogen-ext python-dotenv pillow
+# pip install autogen-agentchat autogen-ext python-dotenv requests
 
 import asyncio
-from PIL import Image
-from dotenv import load_dotenv
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-from autogen_agentchat.messages import MultiModalMessage, TextMessage
-from autogen_core import Image as AGImage
+import os
+import requests
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.ui import Console
+from autogen_agentchat.messages import TextMessage
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from dotenv import load_dotenv
 
+# Load API keys/config
 load_dotenv(override=True)
 
-# Load image into Autogen's image type
-img = AGImage(Image.open("c://code//agenticai//5_autogen//1911_Solvay_conference.jpg"))
+# Initialize model client
+model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 
-# Define agents with OpenAI model clients
-desc_agent = AssistantAgent("desc_agent", OpenAIChatCompletionClient(model="gpt-4o"))
-context_agent = AssistantAgent("context_agent", OpenAIChatCompletionClient(model="gpt-4o"))
+# Define forex tool that calls real API
+async def get_forex_rate(target: str) -> float:
+    """Get the live forex rate of USD against a target currency."""
+    api_key = os.getenv("EXCHANGE_RATE_API_KEY")
+    url = f"https://v6.exchangerate-api.com/v6/{api_key}/latest/USD"
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
+        
+        if response.status_code == 200 and "conversion_rates" in data:
+            rate = data["conversion_rates"].get(target.upper())
+            if rate:
+                return rate
+            else:
+                return f"Currency code '{target}' not found"
+        else:
+            return f"API Error: {data.get('error-type', 'Unknown error')}"
+    except Exception as e:
+        return f"Error fetching rate: {str(e)}"
 
-async def main():
-    # Step 1: Ask for image description
-    desc = await desc_agent.on_messages([
-        MultiModalMessage(
-            content=["Describe this historical photograph in detail. What kind of event does this appear to be?", img],
-            source="User"
-        )], cancellation_token=None
-    )
-    print("\nDESCRIPTION\n" + "=" * 50 + f"\n{desc.chat_message.content}")
+# Create AssistantAgent
+agent = AssistantAgent(
+    name="forex_agent",
+    model_client=model_client,
+    tools=[get_forex_rate],
+    system_message="You are a helpful forex assistant who provides live exchange rates and interesting facts!",
+)
 
-    # Step 2: Ask for deeper historical context
-    context = await context_agent.on_messages([
-        MultiModalMessage(
-            content=["Analyze the setting, time period, and context of this photograph.", img],
-            source="User"
-        ),
-        TextMessage(
-            content="If this is the 1911 Solvay Conference, list the attendees by row (front/back) "
-                    "and describe their major contributions to physics.",
-            source="User"
-        )], cancellation_token=None
-    )
-    print("\nHISTORICAL CONTEXT\n" + "=" * 50 + f"\n{context.chat_message.content}")
+# Create text message
+text_message = TextMessage(
+    content="Hello! Can you tell me the USD to INR exchange rate today and an interesting fact about it?"
+    "Please ensure that there is an interesting fact also in the output", 
+    source="User"
+)
 
-    # Close agents cleanly
-    await desc_agent.close()
-    await context_agent.close()
+# Run the agent
+async def main() -> None:
+    await Console(agent.run_stream(task=text_message.content))
+    await model_client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,53 +1,56 @@
 # pip install autogen-agentchat autogen-ext python-dotenv
 
 import asyncio
+from autogen_agentchat.ui import Console
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.teams import SelectorGroupChat
+from autogen_agentchat.conditions import TextMentionTermination
+from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.messages import TextMessage
 from dotenv import load_dotenv
 
+# --- Environment setup ---
 load_dotenv(override=True)
 
-# Initialize model client
+# --- Model client ---
 model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 
-# Define agents
-coder = AssistantAgent(
-    name="Coder",
+# --- Agents ---
+primary_agent = AssistantAgent(
+    name="primary",
     model_client=model_client,
-    system_message="Write clean, well-documented Python code based on the user requirement."
+    system_message="You are a helpful AI assistant. Write clear, concise, and factual responses.",
 )
 
-tester = AssistantAgent(
-    name="Tester",
+critic_agent = AssistantAgent(
+    name="critic",
     model_client=model_client,
-    system_message="Write test cases to validate the coder's implementation."
+    system_message="Provide brief, constructive feedback. Respond with 'STOP' when satisfied.",
 )
 
-reviewer = AssistantAgent(
-    name="Reviewer",
-    model_client=model_client,
-    system_message="Review the code and test cases, suggest improvements or say APPROVED if all is good."
+# --- Termination rule ---
+termination_condition = TextMentionTermination("STOP")
+
+# --- Team setup ---
+team = RoundRobinGroupChat(
+    participants=[primary_agent, critic_agent],
+    termination_condition=termination_condition,
 )
 
-# Create dynamic team
-team = SelectorGroupChat([coder, tester, reviewer], model_client=model_client)
-
-
+# --- Async main ---
 async def main():
-    print("\n=== Starting Dynamic Team Discussion ===\n")
+    print("Starting team discussion...\n")
 
-    # Stream each message from the team
-    async for message in team.run_stream(task="Write a Python function to check if a string is a palindrome."):
-        # Handle both TextMessage and delta-style chunks
-        if hasattr(message, "content"):
-            sender = getattr(message, "sender", "Unknown")
-            print(f"\n[{sender}]:\n{message.content}\n{'-' * 60}")
+    # Run the team conversation and stream messages
+    async for message in team.run_stream(task="Write a crisp note on AI agents."):
+        if isinstance(message, TextMessage):
+            print(f"\n[{message.source.upper()}]\n{message.content}\n")
 
-    print("\n=== Discussion Finished ===\n")
+    print("\nTeam discussion complete.\n")
 
     await model_client.close()
+    print("Model client closed.\n")
 
-
+# --- Entry point ---
 if __name__ == "__main__":
     asyncio.run(main())

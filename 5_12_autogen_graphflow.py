@@ -1,121 +1,109 @@
-# pip install pydantic autogen-agentchat autogen-ext python-dotenv requests
+# pip install pdfplumber autogen-agentchat autogen-ext python-dotenv requests
 
+# Tested with this: https://ijrar.org/papers/IJRAR19K9780.pdf
 import asyncio
+import os
+import tempfile
 import requests
-from typing import List, Optional
-from pydantic import BaseModel
+import pdfplumber
 from dotenv import load_dotenv
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.teams import MagenticOneGroupChat
 
 load_dotenv(override=True)
 
-# Pydantic models for structured output
-class EvidenceItem(BaseModel):
-    country: str
-    years: List[int]
-    yearly_growth: List[Optional[float]]
-    note: Optional[str] = None
+# -----------------------------
+# Helper: Download + Extract PDF text
+# -----------------------------
+def extract_text_from_pdf(source: str) -> str:
+    """
+    Accepts either a URL or local file path and returns extracted text.
+    """
+    if source.startswith("http"):
+        response = requests.get(source)
+        response.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+    else:
+        tmp_path = source  # Local file path
 
-class FactCheckReport(BaseModel):
-    claim: str
-    verdict: str
-    summary: str
-    evidence: List[EvidenceItem]
-    confidence: str
+    text = ""
+    with pdfplumber.open(tmp_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
 
+    if source.startswith("http"):
+        os.remove(tmp_path)
 
-def fetch_gdp_growth(country_code: str, start_year: int = 1995, end_year: int = 2024):
-    """Fetch annual GDP growth data from World Bank API."""
-    url = f"https://api.worldbank.org/v2/country/{country_code}/indicator/NY.GDP.MKTP.KD.ZG?format=json&date={start_year}:{end_year}&per_page=1000"
-    data = requests.get(url, timeout=20).json()
-    if len(data) < 2:
-        # API sometimes returns metadata only, so handle missing data
-        return [], []
-    
-    # Convert JSON response to a dictionary of {year: growth_value}
-    series = {
-        int(item["date"]): item["value"]
-        for item in data[1]
-        if item.get("date") and item.get("value") is not None
-    }
-    
-    # Sort years to maintain chronological order
-    years = sorted(series.keys())
-    growths = [series[y] for y in years]
-    return years, growths # both will be lists
+    return text[:20000]  # limit to 20k chars for efficiency
 
 
-def detect_recession(years: List[int], growths: List[float]):
-    """Detect two consecutive years of negative GDP growth (annual proxy for recession)."""
-    recessions = []
-    for i in range(len(years) - 1):
-        # Check if both consecutive years had negative growth
-        if growths[i] < 0 and growths[i + 1] < 0:
-            recessions.append((years[i], years[i + 1]))
-    return recessions
+# -----------------------------
+# Model client + Agents
+# -----------------------------
+model_client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 
-
-async def check_recession(country_code: str, country_name: str) -> EvidenceItem:
-    """Run GDP fetch + recession detection for a given country asynchronously."""
-    # Run blocking API call in executor to avoid blocking event loop
-    years, growths = await asyncio.get_event_loop().run_in_executor(None, fetch_gdp_growth, country_code)
-    
-    # Detect recession years based on consecutive negative growth
-    recessions = detect_recession(years, growths)
-    
-    # Summarize findings for this country
-    note = f"Recessions found: {recessions}" if recessions else "No consecutive negative growth found"
-    
-    return EvidenceItem(
-        country=country_name,
-        years=years,
-        yearly_growth=[round(g, 2) for g in growths],
-        note=note
-    )
-
-
-# Define fact-checking agent (for integration or expansion later)
-agent = AssistantAgent(
-    name="fact_checker",
-    model_client=OpenAIChatCompletionClient(model="gpt-4o-mini"),
-    tools=[check_recession],
-    system_message="You are a fact-checker. Use check_recession tool to verify claims about economic recessions.",
+extractor = AssistantAgent(
+    name="Extractor",
+    model_client=model_client,
+    system_message="You extract structured sections and data points from documents clearly."
 )
 
+summarizer = AssistantAgent(
+    name="Summarizer",
+    model_client=model_client,
+    system_message="You summarize the extracted content concisely, highlighting important insights."
+)
 
+analyst = AssistantAgent(
+    name="Analyst",
+    model_client=model_client,
+    system_message="You analyze the summarized content for patterns, risks, and recommendations."
+)
+
+reviewer = AssistantAgent(
+    name="Reviewer",
+    model_client=model_client,
+    system_message="You review all outputs for clarity and correctness, and produce a final report."
+)
+
+team = MagenticOneGroupChat(
+    participants=[extractor, summarizer, analyst, reviewer],
+    model_client=model_client,
+)
+
+# -----------------------------
+# Main
+# -----------------------------
 async def main():
-    countries = [
-        ("IN", "India"),
-        ("US", "United States"),
-        ("GB", "United Kingdom"),
-        ("JP", "Japan"),
-    ]
-    
-    # Collect recession evidence for all countries
-    evidence = []
-    for code, name in countries:
-        evidence.append(await check_recession(code, name))
-    
-    # Decide verdict based on India's evidence
-    india_note = next((e.note for e in evidence if "India" in e.country), "")
-    verdict = (
-        "Not supported"
-        if "Recessions found:" in india_note and "No consecutive" not in india_note
-        else "Supported"
+    print("\n=== Automated PDF / URL Analyzer ===\n")
+    source = input("Enter PDF file path or URL: ").strip()
+
+    try:
+        doc_text = extract_text_from_pdf(source)
+        print(f"\nExtracted {len(doc_text)} characters from document.\n")
+    except Exception as e:
+        print(f"Failed to read PDF: {e}")
+        return
+
+    task = (
+        "Analyze this document text in stages: extract, summarize, analyze, and review. "
+        "Output a final analytical report.\n\n"
+        f"{doc_text}"
     )
-    
-    # Build structured report summarizing results
-    report = FactCheckReport(
-        claim="India has never faced a recession in last 30 years",
-        verdict=verdict,
-        summary=f"Analysis based on annual GDP growth data. {verdict.lower()} by evidence.",
-        evidence=evidence,
-        confidence="Medium",
-    )
-    
-    # Print JSON report neatly
-    print(report.model_dump_json(indent=2))
+
+    print("\n=== Streaming Multi-Agent Collaboration ===\n")
+
+    async for chunk in team.run_stream(task=task):
+        # Stream each message as it arrives
+        if hasattr(chunk, "content") and chunk.content:
+            sender = getattr(chunk, "sender", "Agent")
+            print(f"\033[96m[{sender}]\033[0m {chunk.content}\n")
+
+    print("\n=== Final Report Generated ===\n")
+    await model_client.close()
 
 
 if __name__ == "__main__":

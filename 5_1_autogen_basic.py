@@ -1,57 +1,51 @@
-# pip install autogen-agentchat autogen-core autogen-ext
+# pip install autogen-agentchat autogen-ext python-dotenv
 
 import asyncio
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_agentchat.ui import Console
-from autogen_core.memory import ListMemory, MemoryContent, MemoryMimeType
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-# --------------------------------------------------------
-# STEP 1: Create memory to store user preferences
-# --------------------------------------------------------
-user_memory = ListMemory()
 
-# --------------------------------------------------------
-# STEP 2: Create model client
-# --------------------------------------------------------
+# Create an OpenAI model client
 client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 
-# --------------------------------------------------------
-# STEP 3: Create the assistant
-# --------------------------------------------------------
-assistant_agent = AssistantAgent(
-    name="multilingual_assistant",
+# Create agents
+writer = AssistantAgent("writer", model_client=client, system_message="Draft a short paragraph on agentic AI.")
+editor1 = AssistantAgent("editor1", model_client=client, system_message="Edit the paragraph for grammar.")
+editor2 = AssistantAgent("editor2", model_client=client, system_message="Edit the paragraph for style.")
+final_reviewer = AssistantAgent(
+    "final_reviewer",
     model_client=client,
-    memory=[user_memory],
+    system_message="Consolidate the grammar and style edits into a final version.",
 )
 
-# --------------------------------------------------------
-# STEP 4: Step-by-step interaction
-# --------------------------------------------------------
+# Build the workflow graph
+builder = DiGraphBuilder()
+builder.add_node(writer).add_node(editor1).add_node(editor2).add_node(final_reviewer)
+
+# Fan-out from writer to editors
+builder.add_edge("writer", "editor1")
+builder.add_edge("writer", "editor2")
+
+# Fan-in both editors into final reviewer
+builder.add_edge("editor1", "final_reviewer")
+builder.add_edge("editor2", "final_reviewer")
+
+# Build and validate the graph
+graph = builder.build()
+
+# Create the flow
+flow = GraphFlow(
+    participants=builder.get_participants(),
+    graph=graph,
+)
+
+# Async function to run the flow
 async def main():
-    # Ask the user for their preferred language
-    preferred_language = input("Please enter your preferred language (e.g., French, Hindi, Spanish): ").strip()
+    await Console(flow.run_stream(task="Write a short paragraph about agentic AI."))
 
-    # Store this preference in memory
-    await user_memory.add(
-        MemoryContent(content=f"The user prefers replies in {preferred_language}.", mime_type=MemoryMimeType.TEXT)
-    )
-
-    # Let the user ask a question in English
-    user_question = input("Ask me a question in English: ")
-
-    # Run the assistant — it should recall the memory and reply in preferred language
-    print("Assistant is thinking...\n")
-    stream = assistant_agent.run_stream(
-        task=f"The user asked: '{user_question}'. Respond in their preferred language."
-    )
-    await Console(stream)
-
-# --------------------------------------------------------
-# Run the async function
-# --------------------------------------------------------
-if __name__ == "__main__":
-    asyncio.run(main())
+# Run the async main
+asyncio.run(main())
